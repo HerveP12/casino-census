@@ -10,24 +10,27 @@
         .modal { display: none; }
         .modal.active { display: flex; }
         input, select, textarea { color: white; }
-        input::placeholder { color: rgba(255,255,255,0.5); }
+        input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.5); }
+        option { background: #1e293b; }
+        .loading-spinner { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-<div id="app" class="max-w-5xl mx-auto p-4"></div>
+<div id="app" class="max-w-6xl mx-auto p-4"></div>
 
 <script>
 // =====================================================
-// CONFIGURATION - UPDATE THESE VALUES
+// CONFIGURATION - UPDATE THESE VALUES WITH YOUR OWN
 // =====================================================
 const CONFIG = {
-    // Your Microsoft Form URL (the share link)
+    // Microsoft Form URL
     FORM_URL: 'https://forms.office.com/Pages/ResponsePage.aspx?id=-umvo6-mSUCw4wWmSnrbd3s74at45IxLkYKqhgS9USpUOTdUTjVWMlAyS0JFUVJNUlhQQzlGNzIzTC4u',
     
-    // Your JSON file URL from SharePoint
-    DATA_URL: 'https://lightnwonder-my.sharepoint.com/:u:/g/personal/hparent_lnw_com/IQBuxvZYKYDoRLfGbdM8ligNASNWrZNesJAFaRZg_DT11LM?e=ZPWPTL',
+    // SharePoint JSON file URL
+    DATA_URL: 'https://lightnwonder.sharepoint.com/:u:/t/GlobalTablesPdM/IQCrW1alw9x5T7gl65mHRPoRATAdCBEA7T5E6ORIFeEfHOc?download=1',
     
-    // Field IDs from your Form (get these from Step 2)
+    // Field IDs from Microsoft Form
     FIELDS: {
         ActionType: 'rf600c20ddb26480ab6a386cd55c39df7',
         PropertyID: 're5095e04648249838831319b977f8fb6',
@@ -60,6 +63,7 @@ const CONFIG = {
 };
 // =====================================================
 
+// Survey templates - PTG, ETG, UTIL categories
 const template = {
     ptg: [
         { c: 'Carnival', s: 'Poker Etc', v: ['LNW','AGS','GLXY','EMP','MCR','NRT','TCS','Everi','Other'], g: ['Three Card','UTH','Let It Ride'] },
@@ -82,47 +86,124 @@ const template = {
     ]
 };
 
+// Application state
 let state = {
-    properties: [], surveys: [], currentProperty: null, currentStep: 0,
-    surveyorName: localStorage.getItem('censusName') || '', currentEntries: {},
-    surveyMode: null, selectedVersion: null, loading: true, saving: false, connected: false, lastUpdate: null
+    properties: [],
+    surveys: [],
+    currentProperty: null,
+    currentStep: 0,
+    surveyorName: localStorage.getItem('censusName') || '',
+    currentEntries: {},
+    surveyMode: null,
+    selectedVersion: null,
+    loading: true,
+    saving: false,
+    connected: false,
+    lastUpdate: null,
+    propertySearch: '',
+    editingProperty: null,
+    showAllProperties: false,
+    propertySortBy: 'name'
 };
 
+// ==================== DATA FUNCTIONS ====================
+
 async function loadData() {
-    state.loading = true; render();
+    state.loading = true;
+    render();
+    
+    if (!CONFIG.DATA_URL || CONFIG.DATA_URL.includes('XXXXXXXXXX')) {
+        state.loading = false;
+        state.connected = false;
+        render();
+        return;
+    }
+    
     try {
-        const res = await fetch(CONFIG.DATA_URL + '?_=' + Date.now(), { credentials: 'include' });
-        if (!res.ok) throw new Error('Load failed');
+        const res = await fetch(CONFIG.DATA_URL + '?_t=' + Date.now(), { 
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' }
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
+        
         state.properties = (data.properties || []).map(p => ({
-            PropertyID: p.PropertyID, Name: p.Name || p.Title, Location: p.Location,
-            CompetitiveSet: p.CompetitiveSet, CreatedBy: p.CreatedBy, CreatedDate: p.CreatedDate
+            PropertyID: p.PropertyID || p.Id,
+            Name: p.Name || p.Title || '',
+            Location: p.Location || '',
+            CompetitiveSet: p.CompetitiveSet || '',
+            CreatedBy: p.CreatedBy || '',
+            CreatedDate: p.CreatedDate || ''
         }));
+        
         state.surveys = [
-            ...(data.versions || []).map(v => ({ ...v, isVersion: true })),
-            ...(data.entries || [])
+            ...(data.versions || []).map(v => ({
+                VersionID: v.VersionID || v.Id,
+                PropertyID: v.PropertyID,
+                PropertyName: v.PropertyName,
+                Surveyor: v.Surveyor,
+                VersionDate: v.VersionDate,
+                isVersion: true
+            })),
+            ...(data.entries || []).map(e => ({
+                EntryID: e.EntryID || e.Id,
+                VersionID: e.VersionID,
+                PropertyID: e.PropertyID,
+                PropertyName: e.PropertyName,
+                Surveyor: e.Surveyor,
+                Section: e.Section,
+                Category: e.Category,
+                Subcategory: e.Subcategory,
+                Vendor: e.Vendor,
+                Count: e.Count,
+                GameType: e.GameType,
+                SideBet: e.SideBet,
+                Progressive: e.Progressive,
+                EntryType: e.EntryType,
+                Configuration: e.Configuration,
+                SeatCount: e.SeatCount,
+                MinBet: e.MinBet,
+                MaxBet: e.MaxBet,
+                FloorLocation: e.FloorLocation,
+                Notes: e.Notes,
+                Timestamp: e.Timestamp,
+                isVersion: false
+            }))
         ];
+        
         state.connected = true;
-        state.lastUpdate = data.updated ? new Date(data.updated).toLocaleTimeString() : 'Unknown';
+        state.lastUpdate = data.updated ? new Date(data.updated).toLocaleTimeString() : new Date().toLocaleTimeString();
     } catch (e) {
         console.error('Load error:', e);
         state.connected = false;
     }
-    state.loading = false; render();
+    
+    state.loading = false;
+    render();
 }
 
-async function submitForm(data) {
-    const formData = new URLSearchParams();
+async function submitToForm(data) {
+    if (!CONFIG.FORM_URL || CONFIG.FORM_URL.includes('XXXXXXXXXX')) {
+        alert('Configure FORM_URL in the code first');
+        return false;
+    }
+    
+    // Build form data
+    const formBody = [];
     Object.keys(data).forEach(key => {
-        if (CONFIG.FIELDS[key] && data[key]) {
-            formData.append(CONFIG.FIELDS[key], data[key]);
+        if (CONFIG.FIELDS[key] && data[key] !== undefined && data[key] !== null && data[key] !== '') {
+            formBody.push(encodeURIComponent(CONFIG.FIELDS[key]) + '=' + encodeURIComponent(data[key]));
         }
     });
+    
     try {
-        await fetch(CONFIG.FORM_URL.replace('/r/', '/formApi/api/v1/forms/') + '/responses', {
-            method: 'POST', mode: 'no-cors',
+        // Submit to Microsoft Forms
+        const formId = CONFIG.FORM_URL.split('/r/')[1] || CONFIG.FORM_URL.split('id=')[1];
+        await fetch('https://forms.office.com/formApi/api/v1/forms/' + formId + '/responses', {
+            method: 'POST',
+            mode: 'no-cors',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: formData.toString()
+            body: formBody.join('&')
         });
         return true;
     } catch (e) {
@@ -131,219 +212,539 @@ async function submitForm(data) {
     }
 }
 
-async function saveProperty(name, location, compSet) {
-    const id = 'P' + Date.now();
-    await submitForm({
-        ActionType: 'saveProperty', PropertyID: id, PropertyName: name,
-        PropertyLocation: location, CompetitiveSet: compSet,
-        CreatedBy: state.surveyorName, CreatedDate: new Date().toISOString()
-    });
-    state.properties.push({ PropertyID: id, Name: name, Location: location, CompetitiveSet: compSet });
-    state.currentProperty = state.properties[state.properties.length - 1];
-    return true;
-}
+// ==================== PROPERTY FUNCTIONS ====================
 
-async function saveSurvey() {
-    state.saving = true; render();
-    const all = Object.values(state.currentEntries).filter(e => e.count > 0);
-    const vid = 'V' + Date.now();
-    const vdate = new Date().toISOString();
+async function saveProperty() {
+    const name = document.getElementById('propName').value.trim();
+    const location = document.getElementById('propLoc').value.trim();
+    const compSet = document.getElementById('propSet').value.trim();
     
-    await submitForm({
-        ActionType: 'saveVersion', VersionID: vid,
-        PropertyID: state.currentProperty.PropertyID, PropertyName: state.currentProperty.Name,
-        Surveyor: state.surveyorName, VersionDate: vdate
-    });
-    
-    for (const ent of all) {
-        const item = template[ent.section][ent.itemIndex];
-        await submitForm({
-            ActionType: 'saveEntry', EntryID: 'E' + Date.now() + Math.random().toString(36).substr(2, 4),
-            VersionID: vid, PropertyID: state.currentProperty.PropertyID,
-            PropertyName: state.currentProperty.Name, Surveyor: state.surveyorName,
-            Section: ent.section.toUpperCase(), Category: item.c, Subcategory: item.s,
-            Vendor: ent.vendor === 'Other' ? 'Other: ' + ent.otherSpecify : ent.vendor,
-            Count: String(ent.count), GameType: ent.gameType || '', SideBet: ent.sideBet || '',
-            Progressive: ent.progressive || '', EntryType: ent.type || '',
-            Configuration: ent.configuration || '', SeatCount: ent.seatCount || '',
-            MinBet: ent.minBet || '', MaxBet: ent.maxBet || '',
-            FloorLocation: ent.location || '', Notes: ent.notes || '',
-            Timestamp: new Date().toISOString()
-        });
-        await new Promise(r => setTimeout(r, 100)); // Small delay between submissions
+    if (!name || !location || !compSet) {
+        alert('Please fill all fields');
+        return;
     }
     
-    alert('Survey saved successfully!\n\n' + all.length + ' entries submitted.\n\nData will sync within 5 minutes.');
-    state.currentStep = 0; state.currentEntries = {}; state.surveyMode = null; state.saving = false;
+    // Check for duplicate
+    const exists = state.properties.find(p => 
+        p.Name.toLowerCase() === name.toLowerCase() && 
+        (!state.editingProperty || p.PropertyID !== state.editingProperty.PropertyID)
+    );
+    if (exists) {
+        alert('Property with this name already exists');
+        return;
+    }
+    
+    const id = state.editingProperty ? state.editingProperty.PropertyID : 'P' + Date.now();
+    const now = new Date().toISOString();
+    
+    await submitToForm({
+        ActionType: state.editingProperty ? 'updateProperty' : 'saveProperty',
+        PropertyID: id,
+        PropertyName: name,
+        PropertyLocation: location,
+        CompetitiveSet: compSet,
+        CreatedBy: state.surveyorName || 'Unknown',
+        CreatedDate: state.editingProperty ? state.editingProperty.CreatedDate : now
+    });
+    
+    if (state.editingProperty) {
+        const idx = state.properties.findIndex(p => p.PropertyID === id);
+        if (idx >= 0) {
+            state.properties[idx] = { ...state.properties[idx], Name: name, Location: location, CompetitiveSet: compSet };
+        }
+        if (state.currentProperty?.PropertyID === id) {
+            state.currentProperty = state.properties[idx];
+        }
+    } else {
+        const newProp = { PropertyID: id, Name: name, Location: location, CompetitiveSet: compSet, CreatedBy: state.surveyorName, CreatedDate: now };
+        state.properties.push(newProp);
+        state.currentProperty = newProp;
+    }
+    
+    state.editingProperty = null;
+    closeModal('modalProperty');
     render();
 }
 
-function getVersions(pid) { return state.surveys.filter(s => s.PropertyID === pid && s.isVersion); }
-function getRecent(pid) { const v = getVersions(pid); return v.length ? v.sort((a,b) => new Date(b.VersionDate) - new Date(a.VersionDate))[0] : null; }
-function getTotalItems() {
-    const latest = {};
-    state.surveys.filter(s => s.isVersion).forEach(v => {
-        if (!latest[v.PropertyID] || new Date(v.VersionDate) > new Date(latest[v.PropertyID].VersionDate)) latest[v.PropertyID] = v;
-    });
-    return Object.values(latest).reduce((t, v) => t + state.surveys.filter(s => s.VersionID === v.VersionID && !s.isVersion).reduce((sum, e) => sum + (parseInt(e.Count) || 0), 0), 0);
-}
-
-function render() {
-    const app = document.getElementById('app');
-    if (state.loading) { app.innerHTML = '<div class="flex items-center justify-center h-screen"><div class="text-white text-xl">Loading...</div></div>'; return; }
+function deleteProperty(propId) {
+    const prop = state.properties.find(p => p.PropertyID === propId);
+    if (!prop) return;
     
-    const secKey = ['','ptg','etg','util'][state.currentStep];
-    const secName = ['','PTG - Physical Table Games','ETG - Electronic Table Games','UTIL - Utilities'][state.currentStep];
-    const curEntries = Object.values(state.currentEntries).filter(e => e.section === secKey && e.count > 0);
+    const versions = getVersions(propId);
+    const entries = state.surveys.filter(s => s.PropertyID === propId && !s.isVersion);
     
-    let html = `
-    <header class="bg-white/10 backdrop-blur rounded-2xl p-6 mb-6 border border-white/20">
-        <div class="flex flex-wrap justify-between items-center gap-4 mb-4">
-            <div>
-                <h1 class="text-2xl md:text-3xl font-bold text-white">Casino Floor Census</h1>
-                <div class="flex items-center gap-3 mt-1">
-                    <span class="text-blue-200 text-sm">PTG • ETG • UTIL</span>
-                    <span class="text-xs px-2 py-0.5 rounded ${state.connected ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}">${state.connected ? '● Online' : '○ Offline'}</span>
-                    ${state.lastUpdate ? `<span class="text-xs text-white/50">Updated: ${state.lastUpdate}</span>` : ''}
-                </div>
-            </div>
-            <div class="flex gap-2">
-                <button onclick="loadData()" class="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm">↻ Refresh</button>
-                <button onclick="exportCSV()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium">↓ Export CSV</button>
-            </div>
-        </div>
-        <div class="grid grid-cols-3 gap-3 text-center">
-            <div class="bg-blue-500/20 rounded-xl p-3 border border-blue-400/30">
-                <div class="text-2xl font-bold text-white">${state.properties.length}</div>
-                <div class="text-xs text-blue-200">Properties</div>
-            </div>
-            <div class="bg-purple-500/20 rounded-xl p-3 border border-purple-400/30">
-                <div class="text-2xl font-bold text-white">${state.surveys.filter(s => s.isVersion).length}</div>
-                <div class="text-xs text-purple-200">Surveys</div>
-            </div>
-            <div class="bg-emerald-500/20 rounded-xl p-3 border border-emerald-400/30">
-                <div class="text-2xl font-bold text-white">${getTotalItems()}</div>
-                <div class="text-xs text-emerald-200">Items</div>
-            </div>
-        </div>
-    </header>`;
+    const msg = versions.length > 0 
+        ? `Delete "${prop.Name}"?\n\nThis has ${versions.length} survey versions and ${entries.length} entries.`
+        : `Delete "${prop.Name}"?`;
     
-    if (state.currentStep === 0) {
-        html += `
-        <main class="bg-white/10 backdrop-blur rounded-2xl p-6 border border-white/20">
-            <h2 class="text-xl font-bold text-white mb-4">Start Survey</h2>
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-sm text-blue-200 mb-1">Your Name</label>
-                    <input type="text" id="inpName" value="${state.surveyorName}" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-400" placeholder="Enter your name">
-                </div>
-                <div>
-                    <label class="block text-sm text-blue-200 mb-1">Select Property</label>
-                    <select id="selProp" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-400">
-                        <option value="">-- Select --</option>
-                        ${state.properties.map(p => `<option value="${p.PropertyID}" ${state.currentProperty?.PropertyID === p.PropertyID ? 'selected' : ''}>${p.Name} - ${p.Location}</option>`).join('')}
-                    </select>
-                </div>
-                <button onclick="openAddProperty()" class="w-full bg-blue-500/30 hover:bg-blue-500/50 text-blue-100 rounded-lg py-2.5 text-sm font-medium">+ Add New Property</button>
-                <button onclick="startSurvey()" class="w-full bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white rounded-lg py-3 font-bold text-lg">Start Survey →</button>
-            </div>
-        </main>`;
-    } else {
-        const items = template[secKey];
-        html += `
-        <main class="bg-white/10 backdrop-blur rounded-2xl p-6 border border-white/20">
-            <div class="flex justify-between items-start mb-4">
-                <div>
-                    <h2 class="text-lg font-bold text-white">${secName}</h2>
-                    <div class="flex items-center gap-2 mt-1">
-                        <span class="text-sm text-blue-200">Step ${state.currentStep}/3</span>
-                        <div class="flex gap-1">${[1,2,3].map(i => `<div class="w-8 h-1.5 rounded ${i <= state.currentStep ? 'bg-emerald-500' : 'bg-white/20'}"></div>`).join('')}</div>
-                    </div>
-                </div>
-                <div class="text-sm text-blue-200 bg-blue-500/20 px-3 py-1 rounded-lg">${curEntries.length} entries</div>
-            </div>
-            <div class="space-y-4">
-                ${items.map((item, idx) => `
-                <div class="bg-white/5 rounded-xl p-4 border border-white/10">
-                    <div class="text-white font-medium mb-2">${item.c} → ${item.s}</div>
-                    <div class="flex flex-wrap gap-2">
-                        ${item.v.map(v => {
-                            const k = `${secKey}-${idx}-${v}`;
-                            const ent = state.currentEntries[k];
-                            const has = ent?.count > 0;
-                            return `<button onclick="openDetail('${secKey}',${idx},'${v}')" class="px-3 py-1.5 rounded-lg text-sm ${has ? 'bg-emerald-500 text-white font-medium' : 'bg-white/10 text-blue-200 hover:bg-white/20'}">${v}${has ? ' ('+ent.count+')' : ''}</button>`;
-                        }).join('')}
-                    </div>
-                </div>`).join('')}
-            </div>
-            <div class="flex gap-3 mt-6">
-                <button onclick="cancelSurvey()" class="flex-1 bg-white/10 hover:bg-white/20 text-white rounded-lg py-3 font-medium">Cancel</button>
-                ${state.currentStep > 1 ? `<button onclick="state.currentStep--;render()" class="flex-1 bg-white/10 hover:bg-white/20 text-white rounded-lg py-3 font-medium">← Back</button>` : ''}
-                <button onclick="nextStep()" ${state.saving?'disabled':''} class="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-lg py-3 font-bold disabled:opacity-50">${state.saving ? 'Saving...' : state.currentStep === 3 ? 'Complete ✓' : 'Next →'}</button>
-            </div>
-        </main>`;
+    if (!confirm(msg)) return;
+    
+    // Remove from local state (will be gone on next data refresh from server)
+    state.properties = state.properties.filter(p => p.PropertyID !== propId);
+    state.surveys = state.surveys.filter(s => s.PropertyID !== propId);
+    
+    if (state.currentProperty?.PropertyID === propId) {
+        state.currentProperty = null;
     }
     
-    // Modals
-    html += `
-    <div id="modalProperty" class="modal fixed inset-0 bg-black/70 items-center justify-center z-50 p-4">
-        <div class="bg-slate-800 rounded-xl p-6 w-full max-w-md border border-white/20">
-            <h3 class="text-lg font-bold text-white mb-4">Add Property</h3>
-            <div class="space-y-3">
-                <input type="text" id="propName" placeholder="Property Name" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">
-                <input type="text" id="propLoc" placeholder="Location (City, State)" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">
-                <input type="text" id="propSet" placeholder="Competitive Set" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">
-            </div>
-            <div class="flex gap-3 mt-4">
-                <button onclick="closeModal('modalProperty')" class="flex-1 bg-white/10 text-white rounded-lg py-2.5">Cancel</button>
-                <button onclick="addProperty()" class="flex-1 bg-blue-500 text-white rounded-lg py-2.5 font-medium">Add</button>
-            </div>
-        </div>
-    </div>
-    
-    <div id="modalDetail" class="modal fixed inset-0 bg-black/70 items-center justify-center z-50 p-4 overflow-y-auto">
-        <div class="bg-slate-800 rounded-xl p-6 w-full max-w-md border border-white/20 my-8">
-            <h3 id="detailTitle" class="text-lg font-bold text-white mb-4">Entry Details</h3>
-            <div id="detailContent" class="space-y-3"></div>
-            <div class="flex gap-3 mt-4">
-                <button onclick="closeModal('modalDetail')" class="flex-1 bg-white/10 text-white rounded-lg py-2.5">Cancel</button>
-                <button onclick="saveDetail()" class="flex-1 bg-blue-500 text-white rounded-lg py-2.5 font-medium">Save</button>
-            </div>
-        </div>
-    </div>
-    
-    <div id="modalVersion" class="modal fixed inset-0 bg-black/70 items-center justify-center z-50 p-4">
-        <div class="bg-slate-800 rounded-xl p-6 w-full max-w-lg border border-white/20 max-h-[80vh] overflow-y-auto">
-            <h3 class="text-lg font-bold text-white mb-4">Previous Surveys</h3>
-            <div id="versionContent"></div>
-            <div class="flex gap-3 mt-4">
-                <button onclick="closeModal('modalVersion')" class="flex-1 bg-white/10 text-white rounded-lg py-2.5">Cancel</button>
-                <button onclick="newSurvey()" class="flex-1 bg-emerald-500 text-white rounded-lg py-2.5 font-medium">New Survey</button>
-            </div>
-        </div>
-    </div>`;
-    
-    app.innerHTML = html;
+    render();
+    alert('Property marked for deletion. Full removal happens on next sync.');
 }
 
-let detailCtx = null;
+function editProperty(propId) {
+    const prop = state.properties.find(p => p.PropertyID === propId);
+    if (!prop) return;
+    
+    state.editingProperty = prop;
+    document.getElementById('propName').value = prop.Name;
+    document.getElementById('propLoc').value = prop.Location;
+    document.getElementById('propSet').value = prop.CompetitiveSet;
+    document.getElementById('modalPropertyTitle').textContent = 'Edit Property';
+    document.getElementById('modalProperty').classList.add('active');
+}
+
+// ==================== SURVEY FUNCTIONS ====================
+
+function getVersions(propId) {
+    return state.surveys.filter(s => s.PropertyID === propId && s.isVersion);
+}
+
+function getRecentVersion(propId) {
+    const versions = getVersions(propId);
+    if (!versions.length) return null;
+    return versions.sort((a, b) => new Date(b.VersionDate) - new Date(a.VersionDate))[0];
+}
+
+function getVersionEntries(versionId) {
+    return state.surveys.filter(s => s.VersionID === versionId && !s.isVersion);
+}
+
+function getTotalItems() {
+    const latestVersions = {};
+    state.surveys.filter(s => s.isVersion).forEach(v => {
+        if (!latestVersions[v.PropertyID] || new Date(v.VersionDate) > new Date(latestVersions[v.PropertyID].VersionDate)) {
+            latestVersions[v.PropertyID] = v;
+        }
+    });
+    
+    return Object.values(latestVersions).reduce((total, v) => {
+        const entries = getVersionEntries(v.VersionID);
+        return total + entries.reduce((sum, e) => sum + (parseInt(e.Count) || 0), 0);
+    }, 0);
+}
+
+function startSurvey() {
+    const name = document.getElementById('inpName')?.value?.trim();
+    const propId = document.getElementById('selProp')?.value;
+    
+    if (!name) {
+        alert('Please enter your name');
+        return;
+    }
+    
+    if (!propId) {
+        alert('Please select a property');
+        return;
+    }
+    
+    state.surveyorName = name;
+    localStorage.setItem('censusName', name);
+    state.currentProperty = state.properties.find(p => p.PropertyID === propId);
+    
+    const versions = getVersions(propId);
+    if (versions.length) {
+        showVersionSelector(versions);
+    } else {
+        startNewSurvey();
+    }
+}
+
+function showVersionSelector(versions) {
+    const sorted = versions.sort((a, b) => new Date(b.VersionDate) - new Date(a.VersionDate));
+    
+    let html = '<div class="space-y-3 mb-4">';
+    sorted.forEach(v => {
+        const entries = getVersionEntries(v.VersionID);
+        const totalItems = entries.reduce((sum, e) => sum + (parseInt(e.Count) || 0), 0);
+        const date = new Date(v.VersionDate).toLocaleDateString();
+        
+        html += `
+        <div class="bg-white/5 rounded-xl p-4 border border-white/10">
+            <div class="flex justify-between items-start mb-2">
+                <div>
+                    <div class="text-white font-semibold">${date}</div>
+                    <div class="text-sm text-blue-200">By ${v.Surveyor} • ${entries.length} entries • ${totalItems} items</div>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-3">
+                <button onclick="editVersion('${v.VersionID}')" class="flex-1 bg-blue-500/30 hover:bg-blue-500/50 text-blue-200 rounded-lg py-2 text-sm font-medium">Update</button>
+                <button onclick="copyVersion('${v.VersionID}')" class="flex-1 bg-purple-500/30 hover:bg-purple-500/50 text-purple-200 rounded-lg py-2 text-sm font-medium">Copy & New</button>
+                <button onclick="deleteVersion('${v.VersionID}')" class="bg-red-500/30 hover:bg-red-500/50 text-red-200 rounded-lg px-3 py-2 text-sm">Delete</button>
+            </div>
+        </div>`;
+    });
+    html += '</div>';
+    
+    document.getElementById('versionList').innerHTML = html;
+    document.getElementById('modalVersion').classList.add('active');
+}
+
+function startNewSurvey() {
+    closeModal('modalVersion');
+    state.surveyMode = 'new';
+    state.selectedVersion = null;
+    state.currentStep = 1;
+    state.currentEntries = {};
+    render();
+}
+
+function editVersion(versionId) {
+    if (!confirm('Update this survey version? This will modify the existing data.')) return;
+    
+    const version = state.surveys.find(s => s.VersionID === versionId && s.isVersion);
+    loadVersionEntries(versionId);
+    
+    state.surveyMode = 'edit';
+    state.selectedVersion = version;
+    state.currentStep = 1;
+    closeModal('modalVersion');
+    render();
+}
+
+function copyVersion(versionId) {
+    if (!confirm('Create a new survey based on this version?')) return;
+    
+    loadVersionEntries(versionId);
+    
+    state.surveyMode = 'new';
+    state.selectedVersion = null;
+    state.currentStep = 1;
+    closeModal('modalVersion');
+    render();
+}
+
+function loadVersionEntries(versionId) {
+    const entries = getVersionEntries(versionId);
+    state.currentEntries = {};
+    
+    entries.forEach(e => {
+        const sec = (e.Section || '').toLowerCase();
+        const items = template[sec];
+        if (!items) return;
+        
+        const idx = items.findIndex(i => i.c === e.Category && i.s === e.Subcategory);
+        if (idx < 0) return;
+        
+        const vendor = e.Vendor?.startsWith('Other:') ? 'Other' : e.Vendor;
+        const key = `${sec}-${idx}-${vendor}`;
+        
+        state.currentEntries[key] = {
+            section: sec,
+            itemIndex: idx,
+            vendor: vendor,
+            count: parseInt(e.Count) || 0,
+            otherSpecify: e.Vendor?.startsWith('Other:') ? e.Vendor.replace('Other: ', '').replace('Other:', '') : '',
+            gameType: e.GameType || '',
+            sideBet: e.SideBet || '',
+            progressive: e.Progressive || '',
+            type: e.EntryType || '',
+            configuration: e.Configuration || '',
+            seatCount: e.SeatCount || '',
+            minBet: e.MinBet || '',
+            maxBet: e.MaxBet || '',
+            location: e.FloorLocation || '',
+            notes: e.Notes || ''
+        };
+    });
+}
+
+function deleteVersion(versionId) {
+    const version = state.surveys.find(s => s.VersionID === versionId && s.isVersion);
+    if (!version) return;
+    
+    const entries = getVersionEntries(versionId);
+    const totalItems = entries.reduce((sum, e) => sum + (parseInt(e.Count) || 0), 0);
+    
+    if (!confirm(`Delete survey from ${new Date(version.VersionDate).toLocaleDateString()}?\n\n${entries.length} entries (${totalItems} items) will be removed.`)) return;
+    
+    // Remove from local state
+    state.surveys = state.surveys.filter(s => s.VersionID !== versionId);
+    
+    // Refresh version list
+    const versions = getVersions(state.currentProperty.PropertyID);
+    if (versions.length) {
+        showVersionSelector(versions);
+    } else {
+        closeModal('modalVersion');
+    }
+    
+    render();
+}
+
+async function saveSurvey() {
+    const allEntries = Object.values(state.currentEntries).filter(e => e.count > 0);
+    
+    if (allEntries.length === 0) {
+        alert('No entries to save. Add at least one item.');
+        return;
+    }
+    
+    if (!confirm(`Save survey with ${allEntries.length} entries?`)) return;
+    
+    state.saving = true;
+    render();
+    
+    try {
+        const versionId = state.surveyMode === 'edit' && state.selectedVersion 
+            ? state.selectedVersion.VersionID 
+            : 'V' + Date.now();
+        const versionDate = state.surveyMode === 'edit' && state.selectedVersion
+            ? state.selectedVersion.VersionDate
+            : new Date().toISOString();
+        
+        // Save version record (only for new surveys)
+        if (state.surveyMode !== 'edit') {
+            await submitToForm({
+                ActionType: 'saveVersion',
+                VersionID: versionId,
+                PropertyID: state.currentProperty.PropertyID,
+                PropertyName: state.currentProperty.Name,
+                Surveyor: state.surveyorName,
+                VersionDate: versionDate
+            });
+            
+            // Add to local state
+            state.surveys.push({
+                VersionID: versionId,
+                PropertyID: state.currentProperty.PropertyID,
+                PropertyName: state.currentProperty.Name,
+                Surveyor: state.surveyorName,
+                VersionDate: versionDate,
+                isVersion: true
+            });
+        }
+        
+        // Save all entries
+        for (let i = 0; i < allEntries.length; i++) {
+            const ent = allEntries[i];
+            const item = template[ent.section][ent.itemIndex];
+            
+            const entryData = {
+                ActionType: 'saveEntry',
+                EntryID: 'E' + Date.now() + Math.random().toString(36).substr(2, 6),
+                VersionID: versionId,
+                PropertyID: state.currentProperty.PropertyID,
+                PropertyName: state.currentProperty.Name,
+                Surveyor: state.surveyorName,
+                Section: ent.section.toUpperCase(),
+                Category: item.c,
+                Subcategory: item.s,
+                Vendor: ent.vendor === 'Other' ? 'Other: ' + ent.otherSpecify : ent.vendor,
+                Count: String(ent.count),
+                GameType: ent.gameType || '',
+                SideBet: ent.sideBet || '',
+                Progressive: ent.progressive || '',
+                EntryType: ent.type || '',
+                Configuration: ent.configuration || '',
+                SeatCount: ent.seatCount || '',
+                MinBet: ent.minBet || '',
+                MaxBet: ent.maxBet || '',
+                FloorLocation: ent.location || '',
+                Notes: ent.notes || '',
+                Timestamp: new Date().toISOString()
+            };
+            
+            await submitToForm(entryData);
+            
+            // Small delay between submissions to avoid rate limiting
+            if (i < allEntries.length - 1) {
+                await new Promise(r => setTimeout(r, 150));
+            }
+        }
+        
+        // Calculate summary
+        const ptgCount = allEntries.filter(e => e.section === 'ptg').length;
+        const etgCount = allEntries.filter(e => e.section === 'etg').length;
+        const utilCount = allEntries.filter(e => e.section === 'util').length;
+        const totalItems = allEntries.reduce((sum, e) => sum + e.count, 0);
+        
+        alert(`Survey saved successfully!\n\n${allEntries.length} entries (${totalItems} items):\n• PTG: ${ptgCount}\n• ETG: ${etgCount}\n• UTIL: ${utilCount}\n\nData will sync within 5 minutes.`);
+        
+        // Reset state
+        state.currentStep = 0;
+        state.currentEntries = {};
+        state.surveyMode = null;
+        state.selectedVersion = null;
+        
+    } catch (e) {
+        console.error('Save error:', e);
+        alert('Error saving survey. Please try again.');
+    }
+    
+    state.saving = false;
+    render();
+}
+
+function cancelSurvey() {
+    const entryCount = Object.values(state.currentEntries).filter(e => e.count > 0).length;
+    
+    if (entryCount > 0 && !confirm(`Cancel survey? You will lose ${entryCount} unsaved entries.`)) {
+        return;
+    }
+    
+    state.currentStep = 0;
+    state.currentEntries = {};
+    state.surveyMode = null;
+    state.selectedVersion = null;
+    render();
+}
+
+function nextStep() {
+    const secKey = ['', 'ptg', 'etg', 'util'][state.currentStep];
+    const secName = ['', 'PTG', 'ETG', 'UTIL'][state.currentStep];
+    const currentSectionEntries = Object.values(state.currentEntries).filter(e => e.section === secKey && e.count > 0);
+    
+    if (state.currentStep < 3) {
+        if (currentSectionEntries.length === 0 && !confirm(`No ${secName} entries. Continue anyway?`)) {
+            return;
+        }
+        state.currentStep++;
+        render();
+    } else {
+        saveSurvey();
+    }
+}
+
+function prevStep() {
+    if (state.currentStep > 1) {
+        state.currentStep--;
+        render();
+    }
+}
+
+// ==================== ENTRY DETAIL FUNCTIONS ====================
+
+let currentDetailContext = null;
+
 function openDetail(sec, idx, vendor) {
     const item = template[sec][idx];
-    const k = `${sec}-${idx}-${vendor}`;
-    const ex = state.currentEntries[k] || {};
-    detailCtx = { sec, idx, vendor, item, key: k };
+    const key = `${sec}-${idx}-${vendor}`;
+    const existing = state.currentEntries[key] || {};
     
-    document.getElementById('detailTitle').textContent = `${item.c} - ${item.s} (${vendor})`;
-    let html = `<div><label class="block text-sm text-blue-200 mb-1">Count</label><input type="number" id="detCount" min="0" value="${ex.count||0}" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5"></div>`;
-    if (vendor === 'Other') html += `<div><label class="block text-sm text-blue-200 mb-1">Vendor Name</label><input type="text" id="detOther" value="${ex.otherSpecify||''}" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5" placeholder="Specify vendor"></div>`;
-    if (item.g) html += `<div><label class="block text-sm text-blue-200 mb-1">Game Type</label><select id="detGame" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5"><option value="">-- Select --</option>${item.g.map(g=>`<option value="${g}" ${ex.gameType===g?'selected':''}>${g}</option>`).join('')}</select></div>`;
-    if (item.sb) html += `<div><label class="block text-sm text-blue-200 mb-1">Side Bet</label><select id="detSide" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5"><option value="">-- Select --</option>${item.sb.map(s=>`<option value="${s}" ${ex.sideBet===s?'selected':''}>${s}</option>`).join('')}</select></div>`;
-    if (item.t) html += `<div><label class="block text-sm text-blue-200 mb-1">Type</label><select id="detType" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5"><option value="">-- Select --</option>${item.t.map(t=>`<option value="${t}" ${ex.type===t?'selected':''}>${t}</option>`).join('')}</select></div>`;
-    if (item.cfg) html += `<div><label class="block text-sm text-blue-200 mb-1">Configuration</label><select id="detCfg" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5"><option value="">-- Select --</option>${item.cfg.map(c=>`<option value="${c}" ${ex.configuration===c?'selected':''}>${c}</option>`).join('')}</select></div>`;
-    if (item.st) html += `<div><label class="block text-sm text-blue-200 mb-1">Seat Count</label><select id="detSeats" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5"><option value="">-- Select --</option>${item.st.map(s=>`<option value="${s}" ${ex.seatCount===s?'selected':''}>${s}</option>`).join('')}</select></div>`;
-    if (item.bl) html += `<div class="grid grid-cols-2 gap-3"><div><label class="block text-sm text-blue-200 mb-1">Min Bet</label><input type="text" id="detMin" value="${ex.minBet||''}" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5" placeholder="$5"></div><div><label class="block text-sm text-blue-200 mb-1">Max Bet</label><input type="text" id="detMax" value="${ex.maxBet||''}" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5" placeholder="$500"></div></div>`;
-    html += `<div><label class="block text-sm text-blue-200 mb-1">Floor Location</label><input type="text" id="detLoc" value="${ex.location||''}" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5" placeholder="Main floor, Pit 3"></div>`;
-    html += `<div><label class="block text-sm text-blue-200 mb-1">Notes</label><textarea id="detNotes" rows="2" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">${ex.notes||''}</textarea></div>`;
+    currentDetailContext = { sec, idx, vendor, item, key };
+    
+    document.getElementById('detailTitle').textContent = `${item.c} → ${item.s} (${vendor})`;
+    
+    let html = `
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Count *</label>
+            <input type="number" id="detCount" min="0" value="${existing.count || 0}" 
+                class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <p class="text-xs text-white/50 mt-1">Enter 0 to remove entry</p>
+        </div>`;
+    
+    if (vendor === 'Other') {
+        html += `
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Vendor Name *</label>
+            <input type="text" id="detOther" value="${existing.otherSpecify || ''}" 
+                class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5" placeholder="Enter vendor name">
+        </div>`;
+    }
+    
+    if (item.g) {
+        html += `
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Game Type</label>
+            <select id="detGame" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">
+                <option value="">-- Select --</option>
+                ${item.g.map(g => `<option value="${g}" ${existing.gameType === g ? 'selected' : ''}>${g}</option>`).join('')}
+            </select>
+        </div>`;
+    }
+    
+    if (item.sb) {
+        html += `
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Side Bet</label>
+            <select id="detSide" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">
+                <option value="">-- Select --</option>
+                ${item.sb.map(s => `<option value="${s}" ${existing.sideBet === s ? 'selected' : ''}>${s}</option>`).join('')}
+            </select>
+        </div>`;
+    }
+    
+    if (item.p && item.p[vendor]) {
+        html += `
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Progressive</label>
+            <select id="detProg" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">
+                <option value="">-- Select --</option>
+                ${item.p[vendor].map(p => `<option value="${p}" ${existing.progressive === p ? 'selected' : ''}>${p}</option>`).join('')}
+            </select>
+        </div>`;
+    }
+    
+    if (item.t) {
+        html += `
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Type</label>
+            <select id="detType" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">
+                <option value="">-- Select --</option>
+                ${item.t.map(t => `<option value="${t}" ${existing.type === t ? 'selected' : ''}>${t}</option>`).join('')}
+            </select>
+        </div>`;
+    }
+    
+    if (item.cfg) {
+        html += `
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Configuration</label>
+            <select id="detCfg" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">
+                <option value="">-- Select --</option>
+                ${item.cfg.map(c => `<option value="${c}" ${existing.configuration === c ? 'selected' : ''}>${c}</option>`).join('')}
+            </select>
+        </div>`;
+    }
+    
+    if (item.st) {
+        html += `
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Seat Count</label>
+            <select id="detSeats" class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5">
+                <option value="">-- Select --</option>
+                ${item.st.map(s => `<option value="${s}" ${existing.seatCount === s ? 'selected' : ''}>${s}</option>`).join('')}
+            </select>
+        </div>`;
+    }
+    
+    if (item.bl) {
+        html += `
+        <div class="grid grid-cols-2 gap-3">
+            <div>
+                <label class="block text-sm text-blue-200 mb-1">Min Bet</label>
+                <input type="text" id="detMin" value="${existing.minBet || ''}" 
+                    class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5" placeholder="$5">
+            </div>
+            <div>
+                <label class="block text-sm text-blue-200 mb-1">Max Bet</label>
+                <input type="text" id="detMax" value="${existing.maxBet || ''}" 
+                    class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5" placeholder="$500">
+            </div>
+        </div>`;
+    }
+    
+    html += `
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Floor Location</label>
+            <input type="text" id="detLoc" value="${existing.location || ''}" 
+                class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5" placeholder="Main floor, Pit 3, etc.">
+        </div>
+        <div>
+            <label class="block text-sm text-blue-200 mb-1">Notes</label>
+            <textarea id="detNotes" rows="2" 
+                class="w-full bg-white/10 border border-white/30 rounded-lg px-4 py-2.5" placeholder="Additional notes...">${existing.notes || ''}</textarea>
+        </div>`;
     
     document.getElementById('detailContent').innerHTML = html;
     document.getElementById('modalDetail').classList.add('active');
@@ -351,118 +752,601 @@ function openDetail(sec, idx, vendor) {
 
 function saveDetail() {
     const count = parseInt(document.getElementById('detCount').value) || 0;
-    const other = document.getElementById('detOther')?.value?.trim() || '';
-    if (detailCtx.vendor === 'Other' && count > 0 && !other) { alert('Enter vendor name'); return; }
+    const otherEl = document.getElementById('detOther');
+    const other = otherEl ? otherEl.value.trim() : '';
     
-    if (count === 0) { delete state.currentEntries[detailCtx.key]; }
-    else {
-        state.currentEntries[detailCtx.key] = {
-            section: detailCtx.sec, itemIndex: detailCtx.idx, vendor: detailCtx.vendor, count,
-            otherSpecify: other, gameType: document.getElementById('detGame')?.value || '',
-            sideBet: document.getElementById('detSide')?.value || '', type: document.getElementById('detType')?.value || '',
-            configuration: document.getElementById('detCfg')?.value || '', seatCount: document.getElementById('detSeats')?.value || '',
-            minBet: document.getElementById('detMin')?.value || '', maxBet: document.getElementById('detMax')?.value || '',
-            location: document.getElementById('detLoc')?.value || '', notes: document.getElementById('detNotes')?.value || ''
+    if (currentDetailContext.vendor === 'Other' && count > 0 && !other) {
+        alert('Please enter the vendor name');
+        return;
+    }
+    
+    // Validate "Other" isn't a known vendor
+    if (currentDetailContext.vendor === 'Other' && count > 0) {
+        const knownVendors = ['LNW', 'AGS', 'GLXY', 'EMP', 'MCR', 'NRT', 'TCS', 'Everi', 'IB', 'IGT', 'Spin Tech', 'Aruze', 'IT'];
+        if (knownVendors.some(v => v.toLowerCase() === other.toLowerCase())) {
+            alert(`"${other}" is a known vendor. Please select it from the list instead.`);
+            return;
+        }
+    }
+    
+    const key = currentDetailContext.key;
+    
+    if (count === 0) {
+        delete state.currentEntries[key];
+    } else {
+        state.currentEntries[key] = {
+            section: currentDetailContext.sec,
+            itemIndex: currentDetailContext.idx,
+            vendor: currentDetailContext.vendor,
+            count: count,
+            otherSpecify: other,
+            gameType: document.getElementById('detGame')?.value || '',
+            sideBet: document.getElementById('detSide')?.value || '',
+            progressive: document.getElementById('detProg')?.value || '',
+            type: document.getElementById('detType')?.value || '',
+            configuration: document.getElementById('detCfg')?.value || '',
+            seatCount: document.getElementById('detSeats')?.value || '',
+            minBet: document.getElementById('detMin')?.value || '',
+            maxBet: document.getElementById('detMax')?.value || '',
+            location: document.getElementById('detLoc')?.value || '',
+            notes: document.getElementById('detNotes')?.value || ''
         };
     }
-    closeModal('modalDetail'); render();
-}
-
-function startSurvey() {
-    const name = document.getElementById('inpName').value.trim();
-    const propId = document.getElementById('selProp').value;
-    if (!name) { alert('Enter your name'); return; }
-    if (!propId) { alert('Select a property'); return; }
-    state.surveyorName = name;
-    localStorage.setItem('censusName', name);
-    state.currentProperty = state.properties.find(p => p.PropertyID === propId);
     
-    const versions = getVersions(propId);
-    if (versions.length) { showVersions(versions); }
-    else { newSurvey(); }
-}
-
-function showVersions(versions) {
-    let html = '<div class="space-y-3">';
-    versions.sort((a,b) => new Date(b.VersionDate) - new Date(a.VersionDate)).forEach(v => {
-        const entries = state.surveys.filter(s => s.VersionID === v.VersionID && !s.isVersion);
-        const total = entries.reduce((sum, e) => sum + (parseInt(e.Count) || 0), 0);
-        html += `<div class="bg-white/5 rounded-lg p-3 border border-white/10">
-            <div class="text-white font-medium">${new Date(v.VersionDate).toLocaleDateString()}</div>
-            <div class="text-sm text-blue-200">${v.Surveyor} • ${entries.length} entries • ${total} items</div>
-            <button onclick="copyVersion('${v.VersionID}')" class="mt-2 w-full bg-purple-500/30 text-purple-200 rounded py-1.5 text-sm">Copy as Template</button>
-        </div>`;
-    });
-    html += '</div>';
-    document.getElementById('versionContent').innerHTML = html;
-    document.getElementById('modalVersion').classList.add('active');
-}
-
-function copyVersion(versionId) {
-    const entries = state.surveys.filter(s => s.VersionID === versionId && !s.isVersion);
-    state.currentEntries = {};
-    entries.forEach(e => {
-        const sec = e.Section.toLowerCase();
-        const items = template[sec];
-        if (!items) return;
-        const idx = items.findIndex(i => i.c === e.Category && i.s === e.Subcategory);
-        if (idx >= 0) {
-            const v = e.Vendor.startsWith('Other:') ? 'Other' : e.Vendor;
-            state.currentEntries[`${sec}-${idx}-${v}`] = {
-                section: sec, itemIndex: idx, vendor: v, count: parseInt(e.Count) || 0,
-                otherSpecify: e.Vendor.startsWith('Other:') ? e.Vendor.replace('Other: ','') : '',
-                gameType: e.GameType || '', sideBet: e.SideBet || '', type: e.EntryType || '',
-                configuration: e.Configuration || '', seatCount: e.SeatCount || '',
-                minBet: e.MinBet || '', maxBet: e.MaxBet || '', location: e.FloorLocation || '', notes: e.Notes || ''
-            };
-        }
-    });
-    closeModal('modalVersion');
-    state.surveyMode = 'new'; state.currentStep = 1; render();
-}
-
-function newSurvey() { closeModal('modalVersion'); state.surveyMode = 'new'; state.currentStep = 1; state.currentEntries = {}; render(); }
-function nextStep() {
-    if (state.currentStep < 3) { state.currentStep++; render(); }
-    else {
-        const all = Object.values(state.currentEntries).filter(e => e.count > 0);
-        if (!all.length) { alert('Add at least one entry'); return; }
-        if (confirm('Submit survey with ' + all.length + ' entries?')) saveSurvey();
-    }
-}
-function cancelSurvey() { if (confirm('Cancel survey?')) { state.currentStep = 0; state.currentEntries = {}; render(); } }
-
-function openAddProperty() { document.getElementById('modalProperty').classList.add('active'); }
-async function addProperty() {
-    const n = document.getElementById('propName').value.trim();
-    const l = document.getElementById('propLoc').value.trim();
-    const s = document.getElementById('propSet').value.trim();
-    if (!n || !l || !s) { alert('Fill all fields'); return; }
-    await saveProperty(n, l, s);
-    closeModal('modalProperty');
-    document.getElementById('propName').value = '';
-    document.getElementById('propLoc').value = '';
-    document.getElementById('propSet').value = '';
+    closeModal('modalDetail');
     render();
 }
 
-function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+// ==================== CURRENT ENTRIES VIEW ====================
+
+function showCurrentEntries() {
+    const secKey = ['', 'ptg', 'etg', 'util'][state.currentStep];
+    const secName = ['', 'PTG', 'ETG', 'UTIL'][state.currentStep];
+    const entries = Object.values(state.currentEntries).filter(e => e.section === secKey && e.count > 0);
+    
+    let html = `<h3 class="text-lg font-bold text-white mb-4">Current ${secName} Entries (${entries.length})</h3>`;
+    
+    if (entries.length === 0) {
+        html += '<p class="text-blue-200 text-center py-8">No entries yet</p>';
+    } else {
+        html += '<div class="space-y-2 max-h-96 overflow-y-auto">';
+        entries.forEach(ent => {
+            const item = template[secKey][ent.itemIndex];
+            const vendorDisplay = ent.vendor === 'Other' ? `Other: ${ent.otherSpecify}` : ent.vendor;
+            html += `
+            <div class="bg-white/5 rounded-lg p-3 border border-white/10 flex justify-between items-center">
+                <div>
+                    <div class="text-white font-medium">${item.c} → ${item.s}</div>
+                    <div class="text-sm text-blue-200">${vendorDisplay} • Count: ${ent.count}</div>
+                </div>
+                <button onclick="closeModal('modalEntries'); openDetail('${ent.section}', ${ent.itemIndex}, '${ent.vendor}')" 
+                    class="bg-blue-500/30 hover:bg-blue-500/50 text-blue-200 rounded-lg px-3 py-1.5 text-sm">Edit</button>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    
+    document.getElementById('entriesContent').innerHTML = html;
+    document.getElementById('modalEntries').classList.add('active');
+}
+
+// ==================== EXPORT FUNCTION ====================
 
 function exportCSV() {
     const entries = state.surveys.filter(s => !s.isVersion);
-    if (!entries.length) { alert('No data'); return; }
-    const rows = [['Property','Location','Surveyor','Date','Section','Category','Subcategory','Vendor','Count','GameType','SideBet','Type','MinBet','MaxBet','FloorLocation','Notes']];
-    entries.forEach(e => {
-        const p = state.properties.find(x => x.PropertyID === e.PropertyID);
-        rows.push([e.PropertyName, p?.Location||'', e.Surveyor, e.Timestamp||'', e.Section, e.Category, e.Subcategory, e.Vendor, e.Count, e.GameType||'', e.SideBet||'', e.EntryType||'', e.MinBet||'', e.MaxBet||'', e.FloorLocation||'', `"${(e.Notes||'').replace(/"/g,'""')}"`]);
+    
+    if (entries.length === 0) {
+        alert('No data to export');
+        return;
+    }
+    
+    const headers = [
+        'Property', 'Location', 'Competitive Set', 'Surveyor', 'Survey Date',
+        'Section', 'Category', 'Subcategory', 'Vendor', 'Count',
+        'Game Type', 'Side Bet', 'Progressive', 'Type', 'Configuration',
+        'Seat Count', 'Min Bet', 'Max Bet', 'Floor Location', 'Notes'
+    ];
+    
+    const rows = entries.map(e => {
+        const prop = state.properties.find(p => p.PropertyID === e.PropertyID);
+        const version = state.surveys.find(s => s.VersionID === e.VersionID && s.isVersion);
+        return [
+            e.PropertyName || '',
+            prop?.Location || '',
+            prop?.CompetitiveSet || '',
+            e.Surveyor || '',
+            version?.VersionDate ? new Date(version.VersionDate).toLocaleDateString() : '',
+            e.Section || '',
+            e.Category || '',
+            e.Subcategory || '',
+            e.Vendor || '',
+            e.Count || '',
+            e.GameType || '',
+            e.SideBet || '',
+            e.Progressive || '',
+            e.EntryType || '',
+            e.Configuration || '',
+            e.SeatCount || '',
+            e.MinBet || '',
+            e.MaxBet || '',
+            e.FloorLocation || '',
+            `"${(e.Notes || '').replace(/"/g, '""')}"`
+        ];
     });
-    const csv = rows.map(r => r.join(',')).join('\n');
+    
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
-    a.download = 'casino_census_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.href = url;
+    a.download = `casino_census_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
+    URL.revokeObjectURL(url);
 }
 
+// ==================== BREAKDOWN VIEW ====================
+
+function showBreakdown() {
+    const latestVersions = {};
+    state.surveys.filter(s => s.isVersion).forEach(v => {
+        if (!latestVersions[v.PropertyID] || new Date(v.VersionDate) > new Date(latestVersions[v.PropertyID].VersionDate)) {
+            latestVersions[v.PropertyID] = v;
+        }
+    });
+    
+    let html = '<div class="space-y-4 max-h-96 overflow-y-auto">';
+    
+    Object.values(latestVersions).forEach(v => {
+        const prop = state.properties.find(p => p.PropertyID === v.PropertyID);
+        const entries = getVersionEntries(v.VersionID);
+        const totalItems = entries.reduce((sum, e) => sum + (parseInt(e.Count) || 0), 0);
+        
+        const bySection = {};
+        entries.forEach(e => {
+            if (!bySection[e.Section]) bySection[e.Section] = [];
+            bySection[e.Section].push(e);
+        });
+        
+        html += `
+        <div class="bg-white/5 rounded-xl p-4 border border-white/10">
+            <div class="text-white font-semibold">${prop?.Name || 'Unknown'}</div>
+            <div class="text-sm text-blue-200 mb-2">Total: ${totalItems} items (${entries.length} entries)</div>
+            <div class="space-y-1">
+                ${Object.entries(bySection).map(([sec, secEntries]) => {
+                    const secTotal = secEntries.reduce((sum, e) => sum + (parseInt(e.Count) || 0), 0);
+                    return `<div class="text-sm text-white/70">• ${sec}: ${secTotal} items (${secEntries.length} entries)</div>`;
+                }).join('')}
+            </div>
+        </div>`;
+    });
+    
+    if (Object.keys(latestVersions).length === 0) {
+        html = '<p class="text-blue-200 text-center py-8">No survey data yet</p>';
+    }
+    
+    html += '</div>';
+    
+    document.getElementById('breakdownContent').innerHTML = html;
+    document.getElementById('modalBreakdown').classList.add('active');
+}
+
+// ==================== ALL PROPERTIES VIEW ====================
+
+function showAllProperties() {
+    state.showAllProperties = true;
+    renderPropertiesModal();
+    document.getElementById('modalAllProperties').classList.add('active');
+}
+
+function renderPropertiesModal() {
+    let props = [...state.properties];
+    const search = document.getElementById('propSearchInput')?.value?.toLowerCase() || '';
+    
+    if (search) {
+        props = props.filter(p => 
+            p.Name.toLowerCase().includes(search) || 
+            p.Location.toLowerCase().includes(search)
+        );
+    }
+    
+    // Sort
+    props.sort((a, b) => {
+        if (state.propertySortBy === 'name') return a.Name.localeCompare(b.Name);
+        if (state.propertySortBy === 'location') return a.Location.localeCompare(b.Location);
+        if (state.propertySortBy === 'date') {
+            const aDate = getRecentVersion(a.PropertyID)?.VersionDate || '';
+            const bDate = getRecentVersion(b.PropertyID)?.VersionDate || '';
+            return bDate.localeCompare(aDate);
+        }
+        return 0;
+    });
+    
+    let html = `
+    <div class="flex gap-3 mb-4">
+        <input type="text" id="propSearchInput" placeholder="Search properties..." value="${search}"
+            onkeyup="renderPropertiesModal()"
+            class="flex-1 bg-white/10 border border-white/30 rounded-lg px-4 py-2 text-sm">
+        <select id="propSortSelect" onchange="state.propertySortBy = this.value; renderPropertiesModal()"
+            class="bg-white/10 border border-white/30 rounded-lg px-3 py-2 text-sm">
+            <option value="name" ${state.propertySortBy === 'name' ? 'selected' : ''}>Sort: Name</option>
+            <option value="location" ${state.propertySortBy === 'location' ? 'selected' : ''}>Sort: Location</option>
+            <option value="date" ${state.propertySortBy === 'date' ? 'selected' : ''}>Sort: Recent</option>
+        </select>
+    </div>
+    <div class="space-y-3 max-h-96 overflow-y-auto">`;
+    
+    props.forEach((p, i) => {
+        const recent = getRecentVersion(p.PropertyID);
+        const entries = recent ? getVersionEntries(recent.VersionID) : [];
+        const totalItems = entries.reduce((sum, e) => sum + (parseInt(e.Count) || 0), 0);
+        
+        html += `
+        <div class="bg-white/5 rounded-xl p-4 border border-white/10">
+            <div class="flex justify-between items-start">
+                <div class="flex-1">
+                    <div class="text-white font-semibold">${i + 1}. ${p.Name}</div>
+                    <div class="text-sm text-blue-200">${p.Location} • ${p.CompetitiveSet}</div>
+                    ${recent ? `
+                    <div class="flex gap-2 mt-2">
+                        <span class="text-xs bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">${new Date(recent.VersionDate).toLocaleDateString()}</span>
+                        <span class="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">${totalItems} items</span>
+                    </div>` : ''}
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="selectPropertyFromModal('${p.PropertyID}')" class="bg-blue-500/30 hover:bg-blue-500/50 text-blue-200 rounded-lg px-3 py-1.5 text-sm">Select</button>
+                    <button onclick="closeModal('modalAllProperties'); editProperty('${p.PropertyID}')" class="bg-white/10 hover:bg-white/20 text-white rounded-lg px-2 py-1.5 text-sm">✏️</button>
+                </div>
+            </div>
+        </div>`;
+    });
+    
+    if (props.length === 0) {
+        html += '<p class="text-blue-200 text-center py-8">No properties found</p>';
+    }
+    
+    html += '</div>';
+    
+    document.getElementById('allPropertiesContent').innerHTML = html;
+}
+
+function selectPropertyFromModal(propId) {
+    state.currentProperty = state.properties.find(p => p.PropertyID === propId);
+    closeModal('modalAllProperties');
+    render();
+}
+
+// ==================== UTILITY FUNCTIONS ====================
+
+function closeModal(id) {
+    document.getElementById(id).classList.remove('active');
+}
+
+function openAddProperty() {
+    state.editingProperty = null;
+    document.getElementById('propName').value = '';
+    document.getElementById('propLoc').value = '';
+    document.getElementById('propSet').value = '';
+    document.getElementById('modalPropertyTitle').textContent = 'Add Property';
+    document.getElementById('modalProperty').classList.add('active');
+}
+
+// ==================== MAIN RENDER FUNCTION ====================
+
+function render() {
+    const app = document.getElementById('app');
+    
+    // Loading state
+    if (state.loading) {
+        app.innerHTML = `
+        <div class="flex flex-col items-center justify-center h-screen">
+            <div class="loading-spinner w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mb-4"></div>
+            <div class="text-white text-xl">Loading data...</div>
+        </div>`;
+        return;
+    }
+    
+    const isConfigured = CONFIG.FORM_URL && !CONFIG.FORM_URL.includes('XXXXXXXXXX') && CONFIG.DATA_URL && !CONFIG.DATA_URL.includes('XXXXXXXXXX');
+    const secKey = ['', 'ptg', 'etg', 'util'][state.currentStep];
+    const secName = ['', 'Physical Table Games (PTG)', 'Electronic Table Games (ETG)', 'Utilities (UTIL)'][state.currentStep];
+    const currentSectionEntries = Object.values(state.currentEntries).filter(e => e.section === secKey && e.count > 0);
+    const allEntries = Object.values(state.currentEntries).filter(e => e.count > 0);
+    
+    let html = `
+    <!-- Header -->
+    <header class="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-6 border border-white/20">
+        <div class="flex flex-wrap justify-between items-start gap-4 mb-6">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold text-white mb-1">Casino Floor Census</h1>
+                <div class="flex items-center gap-3 flex-wrap">
+                    <span class="text-blue-200 text-sm">PTG • ETG • UTIL</span>
+                    <span class="text-xs px-2 py-0.5 rounded flex items-center gap-1 ${state.connected ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}">
+                        <span class="w-1.5 h-1.5 rounded-full ${state.connected ? 'bg-emerald-400' : 'bg-red-400'}"></span>
+                        ${state.connected ? 'Connected' : 'Offline'}
+                    </span>
+                    ${state.lastUpdate ? `<span class="text-xs text-white/40">Last sync: ${state.lastUpdate}</span>` : ''}
+                </div>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+                <button onclick="loadData()" class="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm font-medium flex items-center gap-2">
+                    <span class="${state.loading ? 'loading-spinner' : ''}">↻</span> Refresh
+                </button>
+                <button onclick="exportCSV()" class="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-lg text-sm font-medium">
+                    ↓ Export CSV
+                </button>
+            </div>
+        </div>
+        
+        ${!isConfigured ? `
+        <div class="bg-yellow-500/20 border border-yellow-500/50 rounded-xl p-4 mb-6">
+            <div class="text-yellow-200 font-medium mb-1">⚠️ Configuration Required</div>
+            <div class="text-yellow-200/80 text-sm">Update the CONFIG section in index.html with your Form URL, Data URL, and Field IDs.</div>
+        </div>` : ''}
+        
+        <!-- Stats -->
+        <div class="grid grid-cols-3 gap-3">
+            <div class="bg-gradient-to-br from-blue-500/20 to-blue-600/20 rounded-xl p-4 border border-blue-400/30">
+                <div class="text-2xl md:text-3xl font-bold text-white">${state.properties.length}</div>
+                <div class="text-sm text-blue-200">Properties</div>
+                ${state.properties.length > 0 ? `<button onclick="showAllProperties()" class="text-xs text-blue-300 hover:text-white mt-1 underline">View all</button>` : ''}
+            </div>
+            <div class="bg-gradient-to-br from-purple-500/20 to-purple-600/20 rounded-xl p-4 border border-purple-400/30">
+                <div class="text-2xl md:text-3xl font-bold text-white">${state.surveys.filter(s => s.isVersion).length}</div>
+                <div class="text-sm text-purple-200">Surveys</div>
+            </div>
+            <div class="bg-gradient-to-br from-emerald-500/20 to-emerald-600/20 rounded-xl p-4 border border-emerald-400/30">
+                <div class="text-2xl md:text-3xl font-bold text-white">${getTotalItems()}</div>
+                <div class="text-sm text-emerald-200">Total Items</div>
+                ${getTotalItems() > 0 ? `<button onclick="showBreakdown()" class="text-xs text-emerald-300 hover:text-white mt-1 underline">View breakdown</button>` : ''}
+            </div>
+        </div>
+    </header>`;
+    
+    // Main content based on current step
+    if (state.currentStep === 0) {
+        // Home / Start Survey screen
+        html += `
+        <!-- Properties Quick View -->
+        ${state.properties.length > 0 ? `
+        <section class="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-6 border border-white/20">
+            <h2 class="text-xl font-bold text-white mb-4">Your Properties</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                ${state.properties.slice(0, 6).map(p => {
+                    const recent = getRecentVersion(p.PropertyID);
+                    const entries = recent ? getVersionEntries(recent.VersionID) : [];
+                    const totalItems = entries.reduce((sum, e) => sum + (parseInt(e.Count) || 0), 0);
+                    
+                    return `
+                    <div class="bg-white/5 rounded-xl p-4 border border-white/20">
+                        <div class="flex justify-between items-start mb-2">
+                            <div class="flex-1 min-w-0">
+                                <div class="text-white font-semibold truncate">${p.Name}</div>
+                                <div class="text-blue-200 text-sm truncate">${p.Location}</div>
+                            </div>
+                            <button onclick="editProperty('${p.PropertyID}')" class="p-1.5 bg-blue-500/30 hover:bg-blue-500/50 text-blue-200 rounded-lg ml-2">✏️</button>
+                        </div>
+                        ${recent ? `
+                        <div class="flex gap-2 mb-3 flex-wrap">
+                            <span class="text-xs bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">${new Date(recent.VersionDate).toLocaleDateString()}</span>
+                            <span class="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">${totalItems} items</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="state.currentProperty = state.properties.find(x => x.PropertyID === '${p.PropertyID}'); showVersionSelector(getVersions('${p.PropertyID}'));" 
+                                class="flex-1 bg-blue-500/30 hover:bg-blue-500/50 text-blue-200 rounded-lg py-2 text-sm font-medium">View/Edit</button>
+                            <button onclick="state.currentProperty = state.properties.find(x => x.PropertyID === '${p.PropertyID}'); startNewSurvey();" 
+                                class="flex-1 bg-emerald-500/30 hover:bg-emerald-500/50 text-emerald-200 rounded-lg py-2 text-sm font-medium">New</button>
+                        </div>` : `
+                        <button onclick="state.currentProperty = state.properties.find(x => x.PropertyID === '${p.PropertyID}'); document.getElementById('inpName').value = state.surveyorName; startNewSurvey();" 
+                            class="w-full bg-emerald-500/30 hover:bg-emerald-500/50 text-emerald-200 rounded-lg py-2 text-sm font-medium">Start Survey</button>
+                        `}
+                    </div>`;
+                }).join('')}
+            </div>
+            ${state.properties.length > 6 ? `<button onclick="showAllProperties()" class="mt-4 text-blue-300 hover:text-white text-sm underline">View all ${state.properties.length} properties →</button>` : ''}
+        </section>` : ''}
+        
+        <!-- Start Survey Form -->
+        <section class="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
+            <h2 class="text-xl font-bold text-white mb-4">Start Survey</h2>
+            
+            <div class="bg-blue-500/20 border border-blue-400/50 rounded-xl p-4 mb-6">
+                <div class="flex items-start gap-3">
+                    <span class="text-blue-300 text-lg">ℹ️</span>
+                    <div class="text-sm text-blue-100">
+                        <strong>Version Control:</strong> Each property maintains survey versions. The most recent version represents the current floor state.
+                    </div>
+                </div>
+            </div>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-blue-200 mb-2">Your Name *</label>
+                    <input type="text" id="inpName" value="${state.surveyorName}" 
+                        class="w-full bg-white/10 border border-white/30 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-400" 
+                        placeholder="Enter your name">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-blue-200 mb-2">Select Property *</label>
+                    <select id="selProp" class="w-full bg-white/10 border border-white/30 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <option value="">-- Select a property --</option>
+                        ${state.properties.map(p => `<option value="${p.PropertyID}" ${state.currentProperty?.PropertyID === p.PropertyID ? 'selected' : ''}>${p.Name} - ${p.Location}</option>`).join('')}
+                    </select>
+                </div>
+                
+                <button onclick="openAddProperty()" class="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-6 py-3 rounded-xl font-semibold">
+                    + Add New Property
+                </button>
+                
+                ${state.currentProperty ? `
+                <div class="bg-white/5 rounded-xl p-4 border border-white/20">
+                    <span class="text-blue-300 text-sm">Selected:</span>
+                    <span class="text-white font-medium ml-2">${state.currentProperty.Name}</span>
+                </div>` : ''}
+                
+                <button onclick="startSurvey()" ${!isConfigured ? 'disabled' : ''} 
+                    class="w-full bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2">
+                    Start Survey <span>→</span>
+                </button>
+            </div>
+        </section>`;
+        
+    } else {
+        // Survey steps (PTG, ETG, UTIL)
+        const items = template[secKey];
+        
+        html += `
+        <section class="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
+            <div class="flex justify-between items-start mb-6">
+                <div>
+                    <h2 class="text-xl md:text-2xl font-bold text-white mb-2">${secName}</h2>
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm text-blue-200">Step ${state.currentStep} of 3</span>
+                        <div class="flex gap-1">
+                            ${[1,2,3].map(s => `<div class="w-10 h-2 rounded-full ${s <= state.currentStep ? 'bg-emerald-500' : 'bg-white/20'}"></div>`).join('')}
+                        </div>
+                    </div>
+                </div>
+                <button onclick="showCurrentEntries()" class="flex items-center gap-2 bg-blue-500/30 hover:bg-blue-500/50 text-blue-200 px-4 py-2 rounded-lg text-sm font-medium">
+                    👁️ View ${currentSectionEntries.length} entries
+                </button>
+            </div>
+            
+            <!-- Survey Items -->
+            <div class="space-y-4">
+                ${items.map((item, idx) => `
+                <div class="bg-white/5 rounded-xl p-4 border border-white/10">
+                    <div class="text-white font-semibold mb-3">${item.c} → ${item.s}</div>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                        ${item.v.map(v => {
+                            const key = `${secKey}-${idx}-${v}`;
+                            const ent = state.currentEntries[key];
+                            const hasEntry = ent && ent.count > 0;
+                            return `<button onclick="openDetail('${secKey}', ${idx}, '${v}')" 
+                                class="px-3 py-2 rounded-lg text-sm font-medium transition-all ${hasEntry ? 'bg-emerald-500 text-white shadow-lg' : 'bg-white/10 text-blue-200 hover:bg-white/20'}">
+                                ${v}${hasEntry ? ' (' + ent.count + ')' : ''}
+                            </button>`;
+                        }).join('')}
+                    </div>
+                </div>`).join('')}
+            </div>
+            
+            <!-- Navigation Buttons -->
+            <div class="flex gap-3 mt-6">
+                <button onclick="cancelSurvey()" class="flex-1 bg-white/10 hover:bg-white/20 text-white px-6 py-3 rounded-xl font-semibold">
+                    Cancel
+                </button>
+                ${state.currentStep > 1 ? `
+                <button onclick="prevStep()" class="flex-1 bg-white/10 hover:bg-white/20 text-white px-6 py-3 rounded-xl font-semibold">
+                    ← Back
+                </button>` : ''}
+                <button onclick="nextStep()" ${state.saving ? 'disabled' : ''} 
+                    class="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-semibold flex items-center justify-center gap-2">
+                    ${state.saving ? '<span class="loading-spinner w-5 h-5 border-2 border-white border-t-transparent rounded-full"></span> Saving...' : state.currentStep === 3 ? 'Complete ✓' : 'Next →'}
+                </button>
+            </div>
+            
+            <!-- Entry Summary -->
+            <div class="mt-4 pt-4 border-t border-white/10 text-sm text-blue-200">
+                Total entries: ${allEntries.length} | Items: ${allEntries.reduce((sum, e) => sum + e.count, 0)}
+            </div>
+        </section>`;
+    }
+    
+    // Modals
+    html += `
+    <!-- Add/Edit Property Modal -->
+    <div id="modalProperty" class="modal fixed inset-0 bg-black/70 backdrop-blur-sm items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-white/20">
+            <h3 id="modalPropertyTitle" class="text-xl font-bold text-white mb-4">Add Property</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm text-blue-200 mb-1">Property Name *</label>
+                    <input type="text" id="propName" class="w-full bg-white/10 border border-white/30 rounded-xl px-4 py-3" placeholder="MGM Grand">
+                </div>
+                <div>
+                    <label class="block text-sm text-blue-200 mb-1">Location *</label>
+                    <input type="text" id="propLoc" class="w-full bg-white/10 border border-white/30 rounded-xl px-4 py-3" placeholder="Las Vegas, NV">
+                </div>
+                <div>
+                    <label class="block text-sm text-blue-200 mb-1">Competitive Set *</label>
+                    <input type="text" id="propSet" class="w-full bg-white/10 border border-white/30 rounded-xl px-4 py-3" placeholder="Strip">
+                </div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="closeModal('modalProperty')" class="flex-1 bg-white/10 hover:bg-white/20 text-white rounded-xl py-3 font-semibold">Cancel</button>
+                <button onclick="saveProperty()" class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl py-3 font-semibold">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Version Selector Modal -->
+    <div id="modalVersion" class="modal fixed inset-0 bg-black/70 backdrop-blur-sm items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-2xl border border-white/20 max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-white">${state.currentProperty?.Name || 'Property'} - Surveys</h3>
+                <button onclick="closeModal('modalVersion')" class="text-white/60 hover:text-white text-2xl">×</button>
+            </div>
+            <div id="versionList"></div>
+            <div class="flex gap-3 mt-4">
+                <button onclick="closeModal('modalVersion')" class="flex-1 bg-white/10 hover:bg-white/20 text-white rounded-xl py-3 font-semibold">Cancel</button>
+                <button onclick="startNewSurvey()" class="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white rounded-xl py-3 font-semibold">New Survey</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Entry Detail Modal -->
+    <div id="modalDetail" class="modal fixed inset-0 bg-black/70 backdrop-blur-sm items-center justify-center z-50 p-4 overflow-y-auto">
+        <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-lg border border-white/20 my-8">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="detailTitle" class="text-lg font-bold text-white">Entry Details</h3>
+                <button onclick="closeModal('modalDetail')" class="text-white/60 hover:text-white text-2xl">×</button>
+            </div>
+            <div id="detailContent" class="space-y-4"></div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="closeModal('modalDetail')" class="flex-1 bg-white/10 hover:bg-white/20 text-white rounded-xl py-3 font-semibold">Cancel</button>
+                <button onclick="saveDetail()" class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl py-3 font-semibold">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Current Entries Modal -->
+    <div id="modalEntries" class="modal fixed inset-0 bg-black/70 backdrop-blur-sm items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-2xl border border-white/20 max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <span></span>
+                <button onclick="closeModal('modalEntries')" class="text-white/60 hover:text-white text-2xl">×</button>
+            </div>
+            <div id="entriesContent"></div>
+        </div>
+    </div>
+    
+    <!-- Breakdown Modal -->
+    <div id="modalBreakdown" class="modal fixed inset-0 bg-black/70 backdrop-blur-sm items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-2xl border border-white/20 max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-white">Items Breakdown</h3>
+                <button onclick="closeModal('modalBreakdown')" class="text-white/60 hover:text-white text-2xl">×</button>
+            </div>
+            <div id="breakdownContent"></div>
+        </div>
+    </div>
+    
+    <!-- All Properties Modal -->
+    <div id="modalAllProperties" class="modal fixed inset-0 bg-black/70 backdrop-blur-sm items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-3xl border border-white/20 max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-white">All Properties</h3>
+                <button onclick="closeModal('modalAllProperties')" class="text-white/60 hover:text-white text-2xl">×</button>
+            </div>
+            <div id="allPropertiesContent"></div>
+        </div>
+    </div>`;
+    
+    app.innerHTML = html;
+}
+
+// Initialize app
 loadData();
 </script>
 </body>
